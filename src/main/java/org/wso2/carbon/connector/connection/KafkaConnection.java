@@ -18,6 +18,9 @@
 
 package org.wso2.carbon.connector.connection;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient;
 import io.confluent.kafka.schemaregistry.client.rest.RestService;
 import io.confluent.kafka.serializers.KafkaAvroSerializerConfig;
@@ -31,8 +34,11 @@ import org.apache.kafka.common.config.SslConfigs;
 import org.apache.synapse.MessageContext;
 import org.apache.synapse.SynapseException;
 import org.apache.synapse.core.axis2.Axis2MessageContext;
+import org.apache.synapse.util.InlineExpressionUtil;
+import org.jaxen.JaxenException;
 import org.wso2.carbon.connector.callbackhandler.DefaultLoggingCallbackHandler;
 import org.wso2.carbon.connector.callbackhandler.KafkaSendCallbackHandler;
+import org.wso2.carbon.connector.exception.InvalidConfigurationException;
 import org.wso2.carbon.connector.utils.KafkaConnectConstants;
 import org.wso2.carbon.connector.core.ConnectException;
 import org.wso2.carbon.connector.core.connection.Connection;
@@ -41,6 +47,7 @@ import org.wso2.carbon.connector.core.connection.ConnectionConfig;
 import java.lang.reflect.Constructor;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
@@ -218,6 +225,9 @@ public class KafkaConnection implements Connection {
                 KafkaConnectConstants.KAFKA_SASL_LOGIN_RETRY_BACKOFF, false);
         addToProducerConfigProperties(producerConfigProperties, messageContext, KafkaConnectConstants.SASL_LOGIN_RETRY_BACKOFF_MAX,
                 KafkaConnectConstants.KAFKA_SASL_LOGIN_RETRY_BACKOFF_MAX, false);
+        addAdditionalProperties(producerConfigProperties,
+                (String) messageContext.getProperty(KafkaConnectConstants.KAFKA_ADDITIONAL_PRODUCER_PROPERTIES),
+                messageContext);
 
         if (log.isDebugEnabled()) {
             log.debug("Creating Kafka producer connection with the following Kafka configuration properties");
@@ -305,6 +315,55 @@ public class KafkaConnection implements Connection {
             } catch (Exception e) {
                 throw new SynapseException("Error creating the KafkaSendCallbackHandler instance", e);
             }
+        }
+    }
+
+    private void addAdditionalProperties(Properties producerConfigProperties, String additionalProperties,
+                                         MessageContext messageContext) {
+        if (additionalProperties == null || additionalProperties.trim().isEmpty()) return;
+
+        try {
+            additionalProperties = InlineExpressionUtil.processInLineSynapseExpressionTemplate(messageContext,
+                    additionalProperties);
+        } catch (JaxenException e) {
+            throw new SynapseException("Error occurred while processing inline expressions "
+                    + "in additional properties array.", e);
+        } catch (NoSuchMethodError e) {
+            if (InlineExpressionUtil.checkForInlineExpressions(additionalProperties)) {
+                additionalProperties = InlineExpressionUtil.replaceDynamicValues(messageContext, additionalProperties).trim();
+            }
+        }
+
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            JsonNode jsonArray = mapper.readTree(additionalProperties);
+            if (jsonArray != null && jsonArray.isArray()) {
+                for (JsonNode node : jsonArray) {
+                    if (node.isObject()) {
+                        Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
+                        while (fields.hasNext()) {
+                            Map.Entry<String, JsonNode> entry = fields.next();
+                            String key = entry.getKey();
+                            JsonNode value = entry.getValue();
+                            if (key != null && value.isTextual()) {
+                                addToProducerConfigProperties(producerConfigProperties, key, value.asText(), false);
+                            } else {
+                                log.warn("Skipping non-textual value or null key in additional property entry: " + entry);
+                            }
+                        }
+                    } else {
+                        log.warn("Skipping non-object item in additional properties array: " + node);
+                    }
+                }
+            } else {
+                throw new SynapseException("Additional Properties must be configured as a JSON array of objects, "
+                        + "where each object represents a Kafka Producer Config as a key-value pair. Received : "
+                        + additionalProperties);
+            }
+        } catch (JsonProcessingException e) {
+            throw new SynapseException("Invalid Additional Properties format. Must be a JSON array of objects, "
+                    + "where each object represents a Kafka Producer Config as a key-value pair. Received : "
+                    + additionalProperties, e);
         }
     }
 

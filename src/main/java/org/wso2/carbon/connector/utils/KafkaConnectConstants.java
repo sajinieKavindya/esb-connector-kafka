@@ -104,6 +104,7 @@ public class KafkaConnectConstants {
     public static final String KAFKA_SSL_SECURE_RANDOM_IMPLEMENTATION = "kafka.sslSecureRandomImplementation";
     public static final String KAFKA_SSL_TRUSTMANAGER_ALGORITHM = "kafka.sslTrustmanagerAlgorithm";
     public static final String KAFKA_SEND_CALLBACK_HANDLER = "kafka.sendCallbackHandlerClass";
+    public static final String KAFKA_ADDITIONAL_PRODUCER_PROPERTIES = "kafka.additionalProperties";
 
     // Configuration properties default values
     public static final String DEFAULT_SCHEMA_REGISTRY_URL = "http://localhost:8081";
